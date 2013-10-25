@@ -12,8 +12,7 @@ class BindingTest extends FunSuite {
 
   def check(src: String) {
     val σ = State.read(src)
-//    println(σ.fieldData("string")(0).values.map{case s:String ⇒ s.getBytes().mkString("[","|","]")}.mkString)
-    //println(σ.toString)
+    println(σ.toString)
   }
 
   test("node") { check("node.sf") }
