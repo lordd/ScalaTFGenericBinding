@@ -11,9 +11,12 @@ import org.scalatest.FunSuite
 class BindingTest extends FunSuite {
 
   def check(src: String) {
-    val σ = State.read("node.sf")
-    println(σ.toString)
+    val σ = State.read(src)
+//    println(σ.fieldData("string")(0).values.map{case s:String ⇒ s.getBytes().mkString("[","|","]")}.mkString)
+    //println(σ.toString)
   }
 
   test("node") { check("node.sf") }
+  test("four colored nodes") { check("fourColoredNodes.sf") }
+  test("colored nodes") { check("coloredNodes.sf") }
 }

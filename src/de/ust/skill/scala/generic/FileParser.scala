@@ -65,7 +65,16 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
    *
    * @note hasMore is required for proper error reporting
    */
-  private def file: Parser[State] = rep(hasMore ~> stringBlock ~ typeBlock) ^^ { _ ⇒ σ }
+  private def file: Parser[State] = rep(hasMore ~> stringBlock ~ typeBlock ^^ { _ ⇒
+    println("@ 0x"+fromReader.position.toHexString)
+    println(σ)
+    blockCounter += 1
+    // reset block local data
+    countMap = new HashMap[String, Long]
+    lbpsiMap = new HashMap[String, Long]
+    fieldMap = new HashMap[String, ArrayBuffer[(FieldDefinition, Long, Boolean)]]
+    endOffsets = ListBuffer(0L)
+  }) ^^ { _ ⇒ σ }
 
   /**
    * reads a string block
@@ -86,6 +95,8 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
 
       offsets.foreach({ off ⇒
         val size = off - last
+        last = off
+        println(blockCounter, off, size)
         val s = new String(in.take(size).array, 0, size, "UTF-8")
         map.put(map.size + 1L, s)
       })
