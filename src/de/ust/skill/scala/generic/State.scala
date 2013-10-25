@@ -50,7 +50,7 @@ ${
             v.values.map {
               case (n: String, i: Long) ⇒ s"$n#$i"
               case s: String            ⇒ s""""$s""""
-              case _                    ⇒ "<<needs implementation>>"
+              case u                    ⇒ u.toString
             }.mkString(", ")
           }]"
         }.mkString("{\n  ", "\n  ", "\n}")

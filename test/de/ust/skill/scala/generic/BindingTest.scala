@@ -16,6 +16,7 @@ class BindingTest extends FunSuite {
   }
 
   test("node") { check("node.sf") }
+  test("test") { check("test.sf") }
   test("four colored nodes") { check("fourColoredNodes.sf") }
   test("colored nodes") { check("coloredNodes.sf") }
 }
