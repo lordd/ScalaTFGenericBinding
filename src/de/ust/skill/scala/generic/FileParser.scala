@@ -11,6 +11,7 @@ import java.nio.file.Path
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.HashMap
 import scala.language.implicitConversions
+import scala.collection.mutable.ListBuffer
 
 /**
  * see skill ref man §6.2.
@@ -34,11 +35,11 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
   // index(0+) → type
   private var userTypeIndexMap = new HashMap[Long, TypeDefinition]
   // name → type
-  private var userTypeNameMap = σ.tau
+  private var userTypeNameMap = σ.typeDefinitions
   // type → base type
   private var baseTypes = new HashMap[String, String]
-  // base type → index(1+) [[also: base type → finished count]]
-  private var lastValidIndex = new HashMap[String, Long]
+  // type → index(1+)
+  private var totalCount = new HashMap[String, Long]
   // the current block
   private var blockCounter = 0;
 
@@ -51,7 +52,7 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
   // name → List(Field, EndOffset, New?)
   private var fieldMap = new HashMap[String, ArrayBuffer[(FieldDefinition, Long, Boolean)]]
   // list of end-offsets
-  private var endOffsets = List(0L)
+  private var endOffsets = ListBuffer(0L)
 
   /**
    * @param σ the processed serializable state
@@ -77,11 +78,16 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
   private def stringBlockData(offsets: List[Int]) = new Parser[Unit] {
     def apply(in: Input) = {
       var last = 0
-      val map = σ.fehu.get("strings").getOrElse(σ.newMap("strings"))
+      val map = σ.fieldData.get("string").getOrElse {
+        val result = σ.newMap("string");
+        result(0) = new HashMap[Long, Any];
+        result
+      }(0)
 
       offsets.foreach({ off ⇒
-        val s = new String(in.take(off - last).array, "UTF-8")
-        map.put(map.size + 1L, HashMap[Long, Any]((0, s)))
+        val size = off - last
+        val s = new String(in.take(size).array, 0, size, "UTF-8")
+        map.put(map.size + 1L, s)
       })
 
       Success((), in)
@@ -97,12 +103,91 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
     repN(count.toInt, typeDeclaration)
   }) ^^ { _ ⇒
     if (!fieldMap.isEmpty) {
-      // TODO read field data
+      // eliminate preliminary user types
+      fieldMap = fieldMap.map {
+        case (name, fields) ⇒
+          (name,
+            fields.map {
+              case (f, off, isNew) ⇒
+                (FieldDefinition(f.t match {
+                  case t: PreliminaryUserType ⇒ userTypeIndexMap(t.index)
+                  case t                      ⇒ t
+                }, f.name), off, isNew)
+            })
+      }
+
+      // update fieldData
+      val begin = endOffsets.sorted.sliding(2).map { m ⇒ (m(1), m(0)) }.toMap
+      fieldMap.foreach {
+        case (n, fields) ⇒
+          val baseIndex = totalCount.get(baseTypes(n)).getOrElse { totalCount.put(baseTypes(n), 0L); 0L } + lbpsiMap(n) + 1L
+          for (i ← 0 until fields.size) {
+            val (f, end, extended) = fields(i)
+            val data = parseField(f.t, begin(end), end, countMap(n) + (if (extended) totalCount(n) else 0L))
+            for (index ← 0 until data.length) {
+              val instance = σ.fieldData(n)
+              val off = baseIndex + index;
+              instance.get(off).getOrElse {
+                val result = new HashMap[Long, Any];
+                instance(off) = result
+                result
+              }(i) = data(index)
+            }
+          }
+      }
+
+      // update insert index map
 
       // reset helper structures!
 
     }
     ()
+  }
+
+  private[this] def parseField(t: TypeInfo, begin: Long, end: Long, count: Long): Array[Any] = {
+    def fieldParser = t match {
+      case I8Info  ⇒ i8
+      case I16Info ⇒ i16
+      case I32Info ⇒ i32
+      case I64Info ⇒ i64
+      case V64Info ⇒ v64
+      case AnnotationInfo ⇒ v64 ~ v64 ^^ {
+        case 0L ~ _ ⇒ null
+        case t ~ i  ⇒ (σ.getString(t), i)
+      }
+      case BoolInfo ⇒ i8 ^^ { b ⇒ b != 0 }
+      case F32Info  ⇒ f32
+      case F64Info  ⇒ f64
+      case StringInfo ⇒ v64 ^^ {
+        case 0L ⇒ null
+        case i  ⇒ σ.getString(i)
+      }
+
+      //maps are rather complicated
+      //      case d: MapInfo ⇒ parseMap(d.groundType)
+
+      // user types are just references, easy pray
+      case d: TypeDefinition ⇒ v64 ^^ {
+        _ match {
+          case 0     ⇒ null
+          case index ⇒ (d.name, index)
+        }
+
+      }
+
+      case other ⇒ throw new IllegalStateException(
+        s"preliminary usertypes and constants should already have been eleminitad; found $other")
+    }
+
+    // TODO better error message
+    //    assert(fromReader.position == begin, "illegal begin index; non-monotone index order???")
+
+    val result = repN(count.toInt, fieldParser)(fromReader).get.toArray
+
+    // TODO better error message
+    //    assert(fromReader.position == end, "illegal end index")
+
+    result
   }
 
   /**
@@ -117,25 +202,51 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
         (v64 >> (_ match {
           case 0L    ⇒ success(None: Option[String]) ~ success(0L)
           case index ⇒ success(Some(σ(index))) ~ v64
-        })) ~ v64 ~ restrictions ~ fieldDeclarations(name)
+        })) ~ v64 ~ restrictions ~ fieldDeclarations ^^ {
+          case s ~ l ~ c ~ r ~ f ⇒
+            fieldMap.put(name, f.to)
+            countMap.put(name, c)
+            lbpsiMap.put(name, l)
+
+            var fields = new HashMap[Long, FieldDefinition]
+            val fieldIterator = f.iterator
+            for (i ← 0 until f.size)
+              fields.put(i.toLong, fieldIterator.next._1)
+
+            val t = TypeDefinition(userTypeIndexMap.size, name, s, fields)
+            userTypeIndexMap.put(t.index, t)
+            userTypeNameMap.put(t.name, t)
+            σ.newMap(t.name)
+            t.superName match {
+              case None    ⇒ baseTypes.put(t.name, t.name)
+              case Some(s) ⇒ baseTypes.put(t.name, baseTypes(s))
+            }
+            ()
+        }
       }
       case Some(typeDef) ⇒ (typeDef.superName match {
-        case None ⇒ success(None: Option[String]) ~ success(0L)
-        case sn   ⇒ success(sn) ~ v64
-      }) ~ v64 ~ success(List[String]()) ~ fieldDeclarations(name)
-    }) ^^ {
-      case s ~ l ~ c ~ r ~ f ⇒
-        // TODO
-        ()
-    }
+        case None ⇒ success(0L)
+        case sn   ⇒ v64
+      }) ~ v64 ~ fieldDeclarations ^^ {
+        case l ~ c ~ f ⇒
+          fieldMap.put(name, f.to)
+          countMap.put(name, c)
+          lbpsiMap.put(name, l)
+          ()
+      }
+    })
   }
 
-  private[this] def fieldDeclarations(typeName: String) = v64 >> { count ⇒ repN(count.toInt, fieldDeclaration(typeName)) }
-  private[this] def fieldDeclaration(typeName: String) = restrictions ~ fieldTypeDeclaration ~ (v64 ^^ { i ⇒ σ(i) }) ~ v64 ^^ {
+  private[this] def fieldDeclarations = v64 >> { count ⇒ repN(count.toInt, fieldDeclaration) }
+  // TODO not correct in case of append!!!
+  private[this] def fieldDeclaration = restrictions ~ fieldTypeDeclaration ~ (v64 ^^ { i ⇒ σ(i) }) ~ v64 ^^ {
     case r ~ t ~ n ~ e ⇒
-      val isNew = true
-      // TODO 
-      (FieldDefinition(t.toString, n), e, isNew)
+      val isNew = true // TODO
+      // TODO add new fields to the definition
+
+      endOffsets += e
+
+      (FieldDefinition(t, n), e, isNew)
   }
 
   /**
@@ -162,21 +273,21 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
    */
   private def fieldTypeDeclaration: Parser[TypeInfo] = v64 >> { i ⇒
     i match {
-      case 0            ⇒ i8 ^^ { new ConstantI8Info(_) }
-      case 1            ⇒ i16 ^^ { new ConstantI16Info(_) }
-      case 2            ⇒ i32 ^^ { new ConstantI32Info(_) }
-      case 3            ⇒ i64 ^^ { new ConstantI64Info(_) }
-      case 4            ⇒ v64 ^^ { new ConstantV64Info(_) }
-      case 5            ⇒ success(new AnnotationInfo())
-      case 6            ⇒ success(new BoolInfo())
-      case 7            ⇒ success(new I8Info())
-      case 8            ⇒ success(new I16Info())
-      case 9            ⇒ success(new I32Info())
-      case 10           ⇒ success(new I64Info())
-      case 11           ⇒ success(new V64Info())
-      case 12           ⇒ success(new F32Info())
-      case 13           ⇒ success(new F64Info())
-      case 14           ⇒ success(new StringInfo())
+      case 0            ⇒ i8 ^^ { ConstantI8Info(_) }
+      case 1            ⇒ i16 ^^ { ConstantI16Info(_) }
+      case 2            ⇒ i32 ^^ { ConstantI32Info(_) }
+      case 3            ⇒ i64 ^^ { ConstantI64Info(_) }
+      case 4            ⇒ v64 ^^ { ConstantV64Info(_) }
+      case 5            ⇒ success(AnnotationInfo)
+      case 6            ⇒ success(BoolInfo)
+      case 7            ⇒ success(I8Info)
+      case 8            ⇒ success(I16Info)
+      case 9            ⇒ success(I32Info)
+      case 10           ⇒ success(I64Info)
+      case 11           ⇒ success(V64Info)
+      case 12           ⇒ success(F32Info)
+      case 13           ⇒ success(F64Info)
+      case 14           ⇒ success(StringInfo)
       case 15           ⇒ v64 ~ baseTypeInfo ^^ { case i ~ t ⇒ new ConstantLengthArrayInfo(i.toInt, t) }
       case 17           ⇒ baseTypeInfo ^^ { new VariableLengthArrayInfo(_) }
       case 18           ⇒ baseTypeInfo ^^ { new ListInfo(_) }
@@ -192,17 +303,17 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
    */
   private def baseTypeInfo: Parser[TypeInfo] = v64 ^^ { i ⇒
     i match {
-      case 5            ⇒ new AnnotationInfo()
-      case 6            ⇒ new BoolInfo()
-      case 7            ⇒ new I8Info()
-      case 8            ⇒ new I16Info()
-      case 9            ⇒ new I32Info()
-      case 10           ⇒ new I64Info()
-      case 11           ⇒ new V64Info()
-      case 12           ⇒ new F32Info()
-      case 13           ⇒ new F64Info()
-      case 14           ⇒ new StringInfo()
-      case i if i >= 32 ⇒ new PreliminaryUserType(i - 32)
+      case 5            ⇒ AnnotationInfo
+      case 6            ⇒ BoolInfo
+      case 7            ⇒ I8Info
+      case 8            ⇒ I16Info
+      case 9            ⇒ I32Info
+      case 10           ⇒ I64Info
+      case 11           ⇒ V64Info
+      case 12           ⇒ F32Info
+      case 13           ⇒ F64Info
+      case 14           ⇒ StringInfo
+      case i if i >= 32 ⇒ PreliminaryUserType(i - 32)
     }
   }
 
@@ -225,5 +336,8 @@ object FileParser extends ByteStreamParsers {
   /**
    * reads the contents of a file, creating a new state
    */
-  def read(path: Path): State = (new FileParser(path)).readFile
+  def read(path: Path): State = {
+    val p = new FileParser(path)
+    try { p.readFile } catch { case e: Exception ⇒ println(p.σ.toString); throw e }
+  }
 }
