@@ -65,14 +65,7 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
    *
    * @note hasMore is required for proper error reporting
    */
-  private def file: Parser[State] = rep(hasMore ~> stringBlock ~ typeBlock ^^ { _ ⇒
-    blockCounter += 1
-    // reset block local data
-    countMap = new HashMap[String, Long]
-    lbpsiMap = new HashMap[String, Long]
-    fieldMap = new HashMap[String, ArrayBuffer[(FieldDefinition, Long, Boolean)]]
-    endOffsets = ListBuffer(0L)
-  }) ^^ { _ ⇒ σ }
+  private def file: Parser[State] = rep(hasMore ~> stringBlock ~ typeBlock) ^^ { _ ⇒ σ }
 
   /**
    * reads a string block
@@ -112,16 +105,15 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
   }) ^^ { _ ⇒
     if (!fieldMap.isEmpty) {
       // eliminate preliminary user types
-      fieldMap = fieldMap.map {
-        case (name, fields) ⇒
-          (name,
-            fields.map {
-              case (f, off, isNew) ⇒
-                (FieldDefinition(f.t match {
-                  case t: PreliminaryUserType ⇒ userTypeIndexMap(t.index)
-                  case t                      ⇒ t
-                }, f.name), off, isNew)
-            })
+      fieldMap.values.foreach {
+        fields ⇒
+          fields.foreach {
+            case (f, off, isNew) ⇒
+              f.t = f.t match {
+                case t: PreliminaryUserType ⇒ userTypeIndexMap(t.index)
+                case t                      ⇒ t
+              }
+          }
       }
 
       // update fieldData
@@ -139,15 +131,22 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
                 val result = new HashMap[Long, Any];
                 instance(off) = result
                 result
-              }(i) = data(index)
+              }.update(i, data(index))
             }
           }
       }
 
       // update insert index map
+      countMap.foreach { case (k, v) ⇒ totalCount(k) += v }
 
       // reset helper structures!
+      countMap = new HashMap[String, Long]
+      lbpsiMap = new HashMap[String, Long]
+      fieldMap = new HashMap[String, ArrayBuffer[(FieldDefinition, Long, Boolean)]]
+      endOffsets = ListBuffer(0L)
 
+      // we finished a block
+      blockCounter += 1
     }
     ()
   }

@@ -161,13 +161,18 @@ case class PreliminaryUserType(val index: Long) extends TypeInfo {
  *
  * @author Timm Felden
  */
-final case class TypeDefinition(
-    index: Long,
-    name: String,
-    superName: Option[String],
-    fields: HashMap[Long, FieldDefinition]) extends TypeInfo {
+case class TypeDefinition(
+    val index: Long,
+    val name: String,
+    val superName: Option[String],
+    var fields: HashMap[Long, FieldDefinition]) extends TypeInfo {
 
   def typeId: Long = 32 + index
 }
 
-final case class FieldDefinition(t: TypeInfo, name: String)
+final case class FieldDefinition(var t: TypeInfo, val name: String){
+  override def toString = s"FieldDefinition[[${t match {
+    case t:TypeDefinition ⇒ t.name
+    case t ⇒ t.toString 
+  }} $name]]"
+}
