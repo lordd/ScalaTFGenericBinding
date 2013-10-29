@@ -105,6 +105,7 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
   private[this] def typeBlock: Parser[Unit] = (v64 >> { count ⇒
     repN(count.toInt, typeDeclaration)
   }) ^^ { _ ⇒
+    println("begin@0x"+fromReader.position.toHexString)
     if (!fieldMap.isEmpty) {
       // eliminate preliminary user types
       fieldMap.values.foreach {
@@ -187,7 +188,7 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
 
       // we finished a block
       blockCounter += 1
-      println("@0x"+fromReader.position.toHexString)
+      println("end@0x"+fromReader.position.toHexString)
     }
     ()
   }
@@ -297,7 +298,9 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
         val it = knownFields.iterator
         def fieldParser = new Parser[(FieldDefinition, Long, Boolean)] {
           def apply(in: Input) = if (it.hasNext) {
-            Success((it.next, in.v64, false), in)
+            val e = in.v64
+            endOffsets += e
+            Success((it.next, e, false), in)
           } else {
             Success(fieldDeclaration(in).get, in)
           }
