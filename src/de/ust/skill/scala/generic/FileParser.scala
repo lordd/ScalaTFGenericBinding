@@ -154,17 +154,23 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
               // appended field case; we have to iterate over existing instances, but we do not care for actual indices,
               // because correctness relies on their order only
               case (f, end, true) ⇒ {
+                // get field data
                 val data: ArrayBuffer[Any] = parseField(f.t, begin(end), end, countMap(typeName) + totalCount(typeName)).to
                 implicit val ordering = new Ordering[(Long, (Long ⇀ Any))] {
                   override def compare(x: (Long, (Long ⇀ Any)), y: (Long, (Long ⇀ Any))) = x._1.compare(y._1)
                 }
-                val staticType = σ.fieldData(typeName).toList.sorted
-                val fieldIndex = i + userTypeNameMap(typeName).fields.size
 
+                // append type info to the type map, because this is the right place to do it
+                val fieldIndex = userTypeNameMap(typeName).fields.size
+                userTypeNameMap(typeName).fields(fieldIndex) = f
+
+                // update all instances with the respective static type
+                val staticType = σ.fieldData(typeName).toList.sorted
                 val dataIterator = data.iterator
                 val instances = staticType.iterator
                 while (dataIterator.hasNext)
                   instances.next._2(fieldIndex) = dataIterator.next
+
               }
             }
           }
