@@ -8,11 +8,11 @@ package de.ust.skill.scala.generic
 import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
+
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.HashMap
-import scala.language.implicitConversions
 import scala.collection.mutable.ListBuffer
-
+import scala.language.implicitConversions
 /**
  * see skill ref man §6.2.
  *
@@ -22,6 +22,8 @@ import scala.collection.mutable.ListBuffer
  * @author Timm Felden
  */
 final private class FileParser(path: Path) extends ByteStreamParsers {
+
+  type ⇀[A, B] = HashMap[A, B]
 
   /**
    * the state to be created is shared across a file parser instance; file parser instances are used to turn a file into
@@ -33,13 +35,13 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
   // helper structures required to build user types
 
   // index(0+) → type
-  private var userTypeIndexMap = new HashMap[Long, TypeDefinition]
+  private var userTypeIndexMap = new (Long ⇀ TypeDefinition)
   // name → type
   private var userTypeNameMap = σ.typeDefinitions
   // type → base type
-  private var baseTypes = new HashMap[String, String]
+  private var baseTypes = new (String ⇀ String)
   // type → index(1+)
-  private var totalCount = new HashMap[String, Long]
+  private var totalCount = new (String ⇀ Long)
   // the current block
   private var blockCounter = 0;
 
@@ -117,21 +119,53 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
       }
 
       // update fieldData
-      val begin = endOffsets.sorted.sliding(2).map { m ⇒ (m(1), m(0)) }.toMap
+      val begin = if (endOffsets.size > 1)
+        endOffsets.sorted.sliding(2).map { m ⇒ (m(1), m(0)) }.toMap
+      else
+        endOffsets.map { e ⇒ (e, 0L) }.toMap
       fieldMap.foreach {
-        case (n, fields) ⇒
-          val baseIndex = totalCount.get(baseTypes(n)).getOrElse { totalCount.put(baseTypes(n), 0L); 0L } + lbpsiMap(n) + 1L
+        case (typeName, fields) ⇒
+          val baseIndex = totalCount.get(baseTypes(typeName)).getOrElse {
+            totalCount.put(baseTypes(typeName), 0L); 0L
+          } + lbpsiMap(typeName) + 1L
+
           for (i ← 0 until fields.size) {
-            val (f, end, extended) = fields(i)
-            val data = parseField(f.t, begin(end), end, countMap(n) + (if (extended) totalCount(n) else 0L))
-            for (index ← 0 until data.length) {
-              val instance = σ.fieldData(n)
-              val off = baseIndex + index;
-              instance.get(off).getOrElse {
-                val result = new HashMap[Long, Any];
-                instance(off) = result
-                result
-              }.update(i, data(index))
+            fields(i) match {
+
+              // regular case
+              case (f, end, isNew) if (!isNew || 0 == totalCount(typeName)) ⇒ {
+                val data = parseField(
+                  f.t,
+                  begin(end),
+                  end,
+                  countMap(typeName) + (if (isNew) totalCount(typeName) else 0L)
+                )
+                for (index ← 0 until data.length) {
+                  val staticType = σ.fieldData(typeName)
+                  val off = baseIndex + index;
+                  staticType.get(off).getOrElse {
+                    val result = new HashMap[Long, Any];
+                    staticType(off) = result
+                    result
+                  }(i) = data(index)
+                }
+              }
+
+              // appended field case; we have to iterate over existing instances, but we do not care for actual indices,
+              // because correctness relies on their order only
+              case (f, end, true) ⇒ {
+                val data: ArrayBuffer[Any] = parseField(f.t, begin(end), end, countMap(typeName) + totalCount(typeName)).to
+                implicit val ordering = new Ordering[(Long, (Long ⇀ Any))] {
+                  override def compare(x: (Long, (Long ⇀ Any)), y: (Long, (Long ⇀ Any))) = x._1.compare(y._1)
+                }
+                val staticType = σ.fieldData(typeName).toList.sorted
+                val fieldIndex = i + userTypeNameMap(typeName).fields.size
+
+                val dataIterator = data.iterator
+                val instances = staticType.iterator
+                while (dataIterator.hasNext)
+                  instances.next._2(fieldIndex) = dataIterator.next
+              }
             }
           }
       }
@@ -147,6 +181,7 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
 
       // we finished a block
       blockCounter += 1
+      println("@0x"+fromReader.position.toHexString)
     }
     ()
   }
@@ -203,13 +238,14 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
    * @note restrictions are dropped anyway
    */
   private[this] def typeDeclaration = (v64 ^^ { i ⇒ σ(i) }) >> { name ⇒
+    var count = 0L
     // check if we append to an existing type
-    (userTypeNameMap.get(name) match {
+    userTypeNameMap.get(name) match {
       case None ⇒ {
         (v64 >> (_ match {
           case 0L    ⇒ success(None: Option[String]) ~ success(0L)
           case index ⇒ success(Some(σ(index))) ~ v64
-        })) ~ v64 ~ restrictions ~ fieldDeclarations ^^ {
+        })) ~ (v64 ^^ { c ⇒ count = c; c }) ~ restrictions ~ fieldDeclarations(None, count) ^^ {
           case s ~ l ~ c ~ r ~ f ⇒
             fieldMap.put(name, f.to)
             countMap.put(name, c)
@@ -234,26 +270,39 @@ final private class FileParser(path: Path) extends ByteStreamParsers {
       case Some(typeDef) ⇒ (typeDef.superName match {
         case None ⇒ success(0L)
         case sn   ⇒ v64
-      }) ~ v64 ~ fieldDeclarations ^^ {
+      }) ~ (v64 ^^ { c ⇒ count = c; c }) ~ fieldDeclarations(Some(typeDef), count) ^^ {
         case l ~ c ~ f ⇒
           fieldMap.put(name, f.to)
           countMap.put(name, c)
           lbpsiMap.put(name, l)
           ()
       }
-    })
+    }
   }
 
-  private[this] def fieldDeclarations = v64 >> { count ⇒ repN(count.toInt, fieldDeclaration) }
-  // TODO not correct in case of append!!!
+  private[this] def fieldDeclarations(t: Option[TypeDefinition], instanceCount: Long): Parser[List[(FieldDefinition, Long, Boolean)]] =
+    v64 >> { count ⇒
+      if (0 == instanceCount || t.isEmpty) {
+        repN(count.toInt, fieldDeclaration)
+      } else {
+        val Some(typeDef) = t
+        // we have to iterate manually, because there is no sorted mutable map atm
+        val knownFields = for (i ← 0 until typeDef.fields.size) yield typeDef.fields(i)
+        val it = knownFields.iterator
+        def fieldParser = new Parser[(FieldDefinition, Long, Boolean)] {
+          def apply(in: Input) = if (it.hasNext) {
+            Success((it.next, in.v64, false), in)
+          } else {
+            Success(fieldDeclaration(in).get, in)
+          }
+        }
+        repN(count.toInt, fieldParser);
+      }
+    }
   private[this] def fieldDeclaration = restrictions ~ fieldTypeDeclaration ~ (v64 ^^ { i ⇒ σ(i) }) ~ v64 ^^ {
     case r ~ t ~ n ~ e ⇒
-      val isNew = true // TODO
-      // TODO add new fields to the definition
-
       endOffsets += e
-
-      (FieldDefinition(t, n), e, isNew)
+      (FieldDefinition(t, n), e, true)
   }
 
   /**

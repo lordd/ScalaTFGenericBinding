@@ -9,6 +9,8 @@ import java.io.File
  * @author Timm Felden
  */
 final class State {
+  type ⇀[A, B] = HashMap[A, B]
+
   /**
    * References are stored as (name:String, index:Long).
    */
@@ -17,12 +19,12 @@ final class State {
   /**
    * ᚠ: typeName ⇀ instance index ⇀ field index ⇀ data
    */
-  var fieldData = new HashMap[String, HashMap[Long, HashMap[Long, Any]]]
+  var fieldData = new (String ⇀ (Long ⇀ (Long ⇀ Any)))
 
   /**
    * Contains all type definitions by name.
    */
-  var typeDefinitions = new HashMap[String, TypeDefinition]
+  var typeDefinitions = new (String ⇀ TypeDefinition)
 
   /**
    * field data bypass
