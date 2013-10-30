@@ -29,10 +29,17 @@ object Main extends SimpleSwingApplication {
 
     menuBar = new MenuBar {
       contents += new Menu("File") {
-        contents += new MenuItem(Action("read File")({
+        contents += new MenuItem(Action("read file")({
           fileChooser.showOpenDialog(null)
           val state = State.read(fileChooser.selectedFile.getAbsolutePath())
           tabs.pages += new Page(fileChooser.selectedFile.getName(), FieldView(state))
+        }))
+
+        contents += new MenuItem(Action("write file")({
+          tabs.selection.page.content.asInstanceOf[{ val targetState: State }].targetState.write(new File("./out.sf").toPath)
+          //          fileChooser.showOpenDialog(null)
+          //          val state = State.read(fileChooser.selectedFile.getAbsolutePath())
+          //          tabs.pages += new Page(fileChooser.selectedFile.getName(), FieldView(state))
         }))
       }
     }
@@ -98,6 +105,7 @@ object FieldView {
     }
 
     val panel = new GridPanel(1, 2) {
+      val targetState: State = state
 
       contents ++= List(
         new GridPanel(1, 2) {
