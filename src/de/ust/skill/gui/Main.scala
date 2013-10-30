@@ -2,6 +2,7 @@ package de.ust.skill.gui
 
 import java.io.File
 
+import scala.collection.immutable.TreeMap
 import scala.swing._
 import scala.swing.ListView.Renderer
 import scala.swing.TabbedPane.Page
@@ -31,7 +32,7 @@ object Main extends SimpleSwingApplication {
         contents += new MenuItem(Action("read File")({
           fileChooser.showOpenDialog(null)
           val state = State.read(fileChooser.selectedFile.getAbsolutePath())
-          tabs.pages += new Page(fileChooser.selectedFile.getName(), new FieldView(state).panel)
+          tabs.pages += new Page(fileChooser.selectedFile.getName(), FieldView(state))
         }))
       }
     }
@@ -40,70 +41,73 @@ object Main extends SimpleSwingApplication {
   }
 }
 
-class FieldView(state: State) {
+object FieldView {
+  def apply(state: State) = new Object {
 
-  // selected type name
-  var selectedName: Option[String] = None
-  // selected instance ID
-  var selectedInstance: Option[Long] = None
+    // selected type name
+    var selectedName: Option[String] = None
+    // selected instance ID
+    var selectedInstance: Option[Long] = None
 
-  val names: ListView[String] = new ListView(state.fieldData.keySet.toList) {
-    listenTo(selection)
-    reactions += {
-      case ListSelectionChanged(s, r, l) ⇒ {
-        val i = selection.items
-        if (i.isEmpty) {
-          selectedName = None
-          instances.listData = Nil
-        } else {
-          selectedName = Some(i.head)
-          instances.listData = state.fieldData(selectedName.get).keys.to
-        }
-        selectedInstance = None
-        fields.listData = Nil
-      }
-    }
-  }
-
-  val instances: ListView[Long] = new ListView[Long](Nil) {
-    listenTo(selection)
-    reactions += {
-      case ListSelectionChanged(s, r, l) ⇒ {
-        val i = selection.items
-        if (i.isEmpty) {
+    val names: ListView[String] = new ListView(state.fieldData.keySet.toList) {
+      listenTo(selection)
+      reactions += {
+        case ListSelectionChanged(s, r, l) ⇒ {
+          val i = selection.items
+          if (i.isEmpty) {
+            selectedName = None
+            instances.listData = Nil
+          } else {
+            selectedName = Some(i.head)
+            instances.listData = state.fieldData(selectedName.get).keys.toBuffer.sorted.to
+          }
           selectedInstance = None
           fields.listData = Nil
-        } else {
-          selectedInstance = Some(i.head)
-          fields.listData = state.fieldData(selectedName.get)(i.head).toList
         }
       }
     }
-  }
 
-  val fields = new ListView[(Long, Any)](Nil) {
-    renderer = Renderer({
-      case (nr, value) ⇒ selectedName match {
-        case None           ⇒ ""
-        case Some("string") ⇒ s"""#$nr → "$value""""
-        case Some(name) ⇒ {
-          val FieldDefinition(t, n) = state.typeDefinitions(selectedName.get).fields(nr)
-          s"$t $n: $value"
+    val instances: ListView[Long] = new ListView[Long](Nil) {
+      listenTo(selection)
+      reactions += {
+        case ListSelectionChanged(s, r, l) ⇒ {
+          val i = selection.items
+          if (i.isEmpty) {
+            selectedInstance = None
+            fields.listData = Nil
+          } else {
+            selectedInstance = Some(i.head)
+            implicit val order = new Ordering[(Long, Any)] { override def compare(x: (Long, Any), y: (Long, Any)) = x._1.compare(y._1) }
+            fields.listData = state.fieldData(selectedName.get)(i.head).toList.sorted
+          }
         }
       }
-    })
-  }
+    }
 
-  val panel = new GridPanel(1, 2) {
+    val fields = new ListView[(Long, Any)](Nil) {
+      renderer = Renderer({
+        case (nr, value) ⇒ selectedName match {
+          case None           ⇒ ""
+          case Some("string") ⇒ s"""#$nr → "$value""""
+          case Some(name) ⇒ {
+            val FieldDefinition(t, n) = state.typeDefinitions(selectedName.get).fields(nr)
+            s"$t $n: $value"
+          }
+        }
+      })
+    }
 
-    contents ++= List(
-      new GridPanel(1, 2) {
-        contents ++= List(
-          new ScrollPane(names),
-          new ScrollPane(instances)
-        )
-      },
-      new ScrollPane(fields)
-    )
-  }
+    val panel = new GridPanel(1, 2) {
+
+      contents ++= List(
+        new GridPanel(1, 2) {
+          contents ++= List(
+            new ScrollPane(names),
+            new ScrollPane(instances)
+          )
+        },
+        new ScrollPane(fields)
+      )
+    }
+  }.panel
 }
