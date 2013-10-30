@@ -168,11 +168,15 @@ case class TypeDefinition(
     var fields: HashMap[Long, FieldDefinition]) extends TypeInfo {
 
   def typeId: Long = 32 + index
+
+  override def toString = name
 }
 
-final case class FieldDefinition(var t: TypeInfo, val name: String){
-  override def toString = s"FieldDefinition[[${t match {
-    case t:TypeDefinition ⇒ t.name
-    case t ⇒ t.toString 
-  }} $name]]"
+final case class FieldDefinition(var t: TypeInfo, val name: String) {
+  override def toString = s"FieldDefinition[[${
+    t match {
+      case t: TypeDefinition ⇒ t.name
+      case t                 ⇒ t.toString
+    }
+  } $name]]"
 }
