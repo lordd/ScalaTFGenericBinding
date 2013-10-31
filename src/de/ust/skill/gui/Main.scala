@@ -84,8 +84,7 @@ object FieldView {
             fields.listData = Nil
           } else {
             selectedInstance = Some(i.head)
-            implicit val order = new Ordering[(Long, Any)] { override def compare(x: (Long, Any), y: (Long, Any)) = x._1.compare(y._1) }
-            fields.listData = state.fieldData(selectedName.get)(i.head).toList.sorted
+            fields.listData = state.fieldData(selectedName.get)(i.head).toList.sorted(Ordering.by[(Long, Any), Long](_._1))
           }
         }
       }

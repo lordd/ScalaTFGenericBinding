@@ -128,7 +128,7 @@ ${typeDefinitions.mkString("\n")}"""
   }
 
   private[this] def writeStrings(file: FileChannel) {
-    implicit val order = new Ordering[(Long, Any)] { override def compare(x: (Long, Any), y: (Long, Any)) = x._1.compare(y._1) }
+    implicit val order = Ordering.by[(Long, Any), Long](_._1)
     val strings = fieldData("string")(0).toBuffer.sorted.toList.unzip._2.collect { case s: String ⇒ s }
 
     val out = new ByteArrayOutputStream
