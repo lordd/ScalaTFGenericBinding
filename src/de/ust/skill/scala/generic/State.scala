@@ -101,22 +101,47 @@ ${typeDefinitions.mkString("\n")}"""
         case None ⇒ put(0)
         case Some(name) ⇒
           put(reverseStrings(name))
+          // TODO LBPSI
           put(0)
       }
       put(fields.size)
       put(0)
       put(td.fields.size)
-      td.fields.values.foreach { f ⇒
-        put(0)
-        put(f.t.typeId)
-        put(reverseStrings(f.name))
+      td.fields.foreach {
+        case (index, f) ⇒
+          put(0)
+          put(f.t.typeId)
+          put(reverseStrings(f.name))
 
-        f.t match {
-          case _ ⇒ // TODO
-        }
-        //        [[data]]
-        //        out.positions
-        put(out.size)
+          // [[data]]
+          f.t match {
+            case I8Info ⇒
+              out.write(fields.values.map { fmap ⇒ fmap(index) }.collect { case b: Byte ⇒ b }.toArray)
+            case I16Info ⇒
+              val bb = ByteBuffer.allocate(2 * fields.size)
+              val output: PartialFunction[Any, Unit] = { case s: Short ⇒ bb.putShort(s) };
+              fields.values.foreach { fmap ⇒ output(fmap(index)) }
+              bb.rewind
+              out.write(bb.array)
+            case I32Info ⇒
+              val bb = ByteBuffer.allocate(4 * fields.size)
+              val output: PartialFunction[Any, Unit] = { case i: Int ⇒ bb.putInt(i) };
+              fields.values.foreach { fmap ⇒ output(fmap(index)) }
+              bb.rewind
+              out.write(bb.array)
+            case I64Info ⇒
+              val bb = ByteBuffer.allocate(8 * fields.size)
+              val output: PartialFunction[Any, Unit] = { case l: Long ⇒ bb.putLong(l) };
+              fields.values.foreach { fmap ⇒ output(fmap(index)) }
+              bb.rewind
+              out.write(bb.array)
+
+            case StringInfo ⇒
+              val output: PartialFunction[Any, Unit] = { case s: String ⇒ out.write(v64(reverseStrings(s))) };
+              fields.values.foreach { fmap ⇒ output(fmap(index)) }
+          }
+          // end-offset
+          put(out.size)
       }
     }
 
