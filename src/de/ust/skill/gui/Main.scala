@@ -36,10 +36,8 @@ object Main extends SimpleSwingApplication {
         }))
 
         contents += new MenuItem(Action("write file")({
-          tabs.selection.page.content.asInstanceOf[{ val targetState: State }].targetState.write(new File("./out.sf").toPath)
-          //          fileChooser.showOpenDialog(null)
-          //          val state = State.read(fileChooser.selectedFile.getAbsolutePath())
-          //          tabs.pages += new Page(fileChooser.selectedFile.getName(), FieldView(state))
+          fileChooser.showSaveDialog(null)
+          tabs.selection.page.content.asInstanceOf[{ val targetState: State }].targetState.write(fileChooser.selectedFile.toPath)
         }))
       }
     }
