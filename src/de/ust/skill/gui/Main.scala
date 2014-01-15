@@ -21,7 +21,22 @@ object Main extends SimpleSwingApplication {
     override def getDescription = "binary SKilL files"
   }
 
-  def top = new MainFrame {
+  override def startup(args: Array[String]) {
+    super.startup(args)
+
+    // try to read args
+    for (path ← args) {
+      val state = State.read(path)
+      lastTop.tabs.pages += new Page(path, FieldView(state))
+    }
+  }
+
+  var lastTop: TopLevelFrame = null
+  def top = new TopLevelFrame
+
+  class TopLevelFrame extends MainFrame {
+    lastTop = this
+
     title = "My Frame"
 
     val tabs = new TabbedPane
